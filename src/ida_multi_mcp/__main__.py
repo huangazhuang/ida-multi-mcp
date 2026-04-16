@@ -23,6 +23,7 @@ SERVER_NAME = "ida-multi-mcp"
 # ---------------------------------------------------------------------------
 
 _IDA_VERSION_RE = re.compile(r"(\d+\.\d+)")
+_TOML_BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _detect_ida_dir() -> str | None:
@@ -823,30 +824,50 @@ def install_mcp_servers(uninstall=False, quiet=False):
         print_mcp_config()
 
 
-def _write_toml_fallback(f, config, prefix=""):
+def _toml_quote_key(key: str) -> str:
+    """Quote TOML keys when they are not valid bare keys."""
+    if _TOML_BARE_KEY_RE.fullmatch(key):
+        return key
+    return json.dumps(key, ensure_ascii=False)
+
+
+def _toml_format_value(value):
+    """Serialize a Python value as TOML."""
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_format_value(item) for item in value) + "]"
+    if isinstance(value, (int, float)):
+        return str(value)
+    raise TypeError(f"Unsupported TOML value type: {type(value).__name__}")
+
+
+def _write_toml_fallback(f, config, prefix=()):
     """Minimal TOML writer fallback when tomli_w is not available."""
+    scalar_items = []
+    table_items = []
     for key, value in config.items():
-        full_key = f"{prefix}.{key}" if prefix else key
         if isinstance(value, dict):
-            f.write(f"[{full_key}]\n")
-            for k, v in value.items():
-                if isinstance(v, dict):
-                    _write_toml_fallback(f, {k: v}, full_key)
-                elif isinstance(v, str):
-                    f.write(f'{k} = "{v}"\n')
-                elif isinstance(v, list):
-                    items = ", ".join(f'"{i}"' if isinstance(i, str) else str(i) for i in v)
-                    f.write(f"{k} = [{items}]\n")
-                elif isinstance(v, bool):
-                    f.write(f"{k} = {'true' if v else 'false'}\n")
-                else:
-                    f.write(f"{k} = {v}\n")
-        elif isinstance(value, str):
-            f.write(f'{key} = "{value}"\n')
-        elif isinstance(value, bool):
-            f.write(f"{key} = {'true' if value else 'false'}\n")
+            table_items.append((key, value))
         else:
-            f.write(f"{key} = {value}\n")
+            scalar_items.append((key, value))
+
+    if prefix:
+        table_name = ".".join(_toml_quote_key(part) for part in prefix)
+        f.write(f"[{table_name}]\n")
+
+    for key, value in scalar_items:
+        f.write(f"{_toml_quote_key(key)} = {_toml_format_value(value)}\n")
+
+    if prefix and scalar_items and table_items:
+        f.write("\n")
+
+    for index, (key, value) in enumerate(table_items):
+        if prefix or index > 0 or scalar_items:
+            f.write("\n")
+        _write_toml_fallback(f, value, (*prefix, key))
 
 
 def cmd_list(args):
