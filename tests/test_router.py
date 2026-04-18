@@ -118,6 +118,17 @@ class TestVerificationCache:
             router._verify_binary_path(iid, info)
             assert mock_query.call_count == 2  # cache expired
 
+    def test_cached_none_preserves_benefit_of_doubt(self, router_env):
+        """A cached None (query failed) must not turn into a stale-instance error."""
+        _, router, iid = router_env
+        info = {"binary_name": "test.exe", "host": "127.0.0.1", "port": 7000}
+        with patch("ida_multi_mcp.router.query_binary_metadata",
+                   return_value=None):
+            first = router._verify_binary_path(iid, info)
+            second = router._verify_binary_path(iid, info)
+        assert first is True
+        assert second is True
+
 
 class TestSendRequest:
     def test_strips_instance_id(self, router_env):

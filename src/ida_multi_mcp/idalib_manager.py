@@ -15,7 +15,7 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
-from .health import is_process_alive, ping_instance
+from .health import is_process_alive, ping_instance, query_binary_metadata
 
 if TYPE_CHECKING:
     from .registry import InstanceRegistry
@@ -179,8 +179,12 @@ class IdalibManager:
                 )
             }
 
-        # Register in the shared registry.
-        binary_name = os.path.basename(resolved_path)
+        # Ask the worker for its canonical module name so the registry matches
+        # what the metadata resource reports. Falls back to basename when the
+        # input was an IDB (e.g. foo.exe.i64 → module is "foo.exe") or query fails.
+        metadata = query_binary_metadata(host, port, timeout=5.0)
+        module_name = (metadata or {}).get("module") if metadata else None
+        binary_name = module_name or os.path.basename(resolved_path)
         instance_id = self.registry.register(
             pid=proc.pid,
             port=port,
