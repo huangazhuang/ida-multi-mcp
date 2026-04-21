@@ -118,6 +118,9 @@ class InstanceRouter:
         if instance_id in self._binary_path_cache:
             cached_name, cached_time = self._binary_path_cache[instance_id]
             if now - cached_time < self._cache_timeout:
+                # Benefit of doubt when the last query couldn't resolve a name.
+                if cached_name is None:
+                    return True
                 return cached_name == _normalize_binary_name(instance_info.get("binary_name"))
 
         # Query fresh binary metadata

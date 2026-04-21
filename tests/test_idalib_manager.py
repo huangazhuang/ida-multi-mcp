@@ -80,6 +80,30 @@ class TestIdalibManagerSpawn:
         assert info is not None
         assert info["type"] == "idalib"
 
+    @patch("ida_multi_mcp.idalib_manager.query_binary_metadata",
+           return_value={"module": "test.exe", "path": "/tmp/test.exe.i64"})
+    @patch("ida_multi_mcp.idalib_manager.subprocess.Popen")
+    @patch("ida_multi_mcp.idalib_manager.ping_instance", return_value=True)
+    def test_spawn_on_idb_uses_canonical_module_name(
+        self, mock_ping, mock_popen, mock_meta, tmp_path, tmp_registry,
+    ):
+        """Opening an IDB (.i64) must register the original binary name so the
+        router's metadata-resource check doesn't flag the instance as stale."""
+        idb = tmp_path / "test.exe.i64"
+        idb.write_bytes(b"\x00" * 16)
+
+        mock_proc = MagicMock()
+        mock_proc.pid = 77777
+        mock_proc.poll.return_value = None
+        mock_popen.return_value = mock_proc
+
+        mgr = IdalibManager(tmp_registry)
+        result = mgr.spawn_session(str(idb))
+
+        assert "error" not in result
+        info = tmp_registry.get_instance(result["instance_id"])
+        assert info["binary_name"] == "test.exe"
+
     @patch("ida_multi_mcp.idalib_manager.subprocess.Popen")
     @patch("ida_multi_mcp.idalib_manager.ping_instance", return_value=False)
     def test_spawn_timeout(self, mock_ping, mock_popen, tmp_path, tmp_registry):
