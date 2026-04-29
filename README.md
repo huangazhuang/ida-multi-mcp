@@ -37,7 +37,15 @@ Install this fork directly:
 python -m pip install "git+https://github.com/huangazhuang/ida-multi-mcp.git"
 ```
 
-For headless support, run the MCP server with a Python environment that has Hex-Rays' `idapro` package installed and can resolve your IDA Pro install via `IDADIR` or `ida-config.json`.
+For headless support, run the MCP server with a Python environment that has Hex-Rays' `idapro` package installed and can resolve your IDA Pro install via `IDADIR` or `ida-config.json`.  `ida-multi-mcp --install` normalizes `ida-config.json` as UTF-8 without BOM because `idapro.config.load_config()` can fail on BOM-prefixed JSON.
+
+Fallback shell caller, useful when an MCP client lists resources but does not expose dynamic MCP tools directly:
+
+```powershell
+ida-mcp-call tools --names
+ida-mcp-call call list_funcs --input-path D:\\path\\target.exe --args-json '{"queries":{"count":20,"offset":0}}' --structured
+ida-mcp-call call decompile --input-path D:\\path\\target.exe --args-json '{"addr":"0x14000125c"}' --structured
+```
 
 ## Quick Start
 

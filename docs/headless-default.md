@@ -44,3 +44,19 @@ The server opens or reuses a headless `idalib` session, injects the resolved `in
 - `src/ida_multi_mcp/tools/idalib.py`
 - `src/ida_multi_mcp/idalib_manager.py`
 - `src/ida_multi_mcp/idalib_worker.py`
+
+## Fallback shell caller
+
+Some MCP clients can start `ida-multi-mcp` and read resources, but do not expose dynamically discovered MCP tools directly to the model.  This fork ships `ida-mcp-call` as a one-shot JSON-RPC fallback:
+
+```powershell
+ida-mcp-call tools --names
+ida-mcp-call call list_funcs --input-path D:\\path\\target.exe --args-json '{"queries":{"count":20,"offset":0}}' --structured
+ida-mcp-call call decompile --input-path D:\\path\\target.exe --args-json '{"addr":"0x14000125c"}' --structured
+```
+
+`ida-mcp-call` uses the same headless defaults as the MCP server.
+
+## idapro config encoding
+
+`ida-multi-mcp --install` writes `ida-config.json` as UTF-8 without BOM.  This avoids `json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)` from `idapro.config.load_config()` on Windows when the file was created with a UTF-8 BOM.

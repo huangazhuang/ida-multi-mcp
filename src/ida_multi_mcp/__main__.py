@@ -916,34 +916,73 @@ def _get_ida_plugins_dir(custom_dir=None):
         return Path.home() / ".idapro" / "plugins"
 
 
+def _get_ida_config_path():
+    """Return the idapro/IDA user config JSON path."""
+    if sys.platform == "win32":
+        appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+        return appdata / "Hex-Rays" / "IDA Pro" / "ida-config.json"
+    return Path.home() / ".idapro" / "ida-config.json"
+
+
+def _load_ida_config_compat(config_path):
+    """Load ida-config.json while accepting UTF-8 BOM.
+
+    Hex-Rays' ``idapro`` package opens this file without ``encoding='utf-8-sig'``.
+    A UTF-8 BOM can therefore make ``idapro.config.load_config()`` raise
+    ``JSONDecodeError`` at column 1.  We accept BOM here and let install rewrite
+    the file without BOM.
+    """
+    raw = config_path.read_bytes()
+    needs_rewrite = raw.startswith(b"\xef\xbb\xbf")
+    return json.loads(raw.decode("utf-8-sig")), needs_rewrite
+
+
+def _write_ida_config_no_bom(config_path, cfg):
+    """Write ida-config.json as UTF-8 without BOM for idapro compatibility."""
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=4)
+        f.write("\n")
+
+
 def _configure_idalib_path():
     """Auto-detect IDA installation and write to ida-config.json.
 
     The ``idapro`` package reads ``ida-config.json`` at import time to
-    locate IDA libraries. If the ``ida-install-dir`` field is already
-    populated or ``IDADIR`` is set, this is a no-op. Otherwise we scan
-    well-known paths, pick the newest version, and write it.
+    locate IDA libraries.  We always write JSON as UTF-8 without BOM because
+    the ``idapro`` package may choke on a BOM.  If ``IDADIR`` is set, we also
+    persist it to JSON so future shells without ``IDADIR`` still work.
     """
-    # Check if already configured
+    config_path = _get_ida_config_path()
+    cfg = {}
+
+    # IDADIR overrides auto-detection, but still normalize the JSON config for
+    # future MCP clients that do not inherit IDADIR.
     env_dir = os.environ.get("IDADIR", "").strip()
     if env_dir and os.path.isdir(env_dir):
-        print(f"\n  [ok] IDADIR already set: {env_dir}")
+        cfg = {"Paths": {"ida-install-dir": env_dir}}
+        try:
+            _write_ida_config_no_bom(config_path, cfg)
+            print(f"\n  [ok] IDADIR already set: {env_dir}")
+            print(f"       Written to: {config_path}")
+        except Exception as e:
+            print(f"\n  [ok] IDADIR already set: {env_dir}")
+            print(f"  [!!] Failed to write ida-config.json: {e}")
         return
 
     # Check ida-config.json
-    if sys.platform == "win32":
-        config_path = Path(os.environ.get("APPDATA", "")) / "Hex-Rays" / "IDA Pro" / "ida-config.json"
-    else:
-        config_path = Path.home() / ".idapro" / "ida-config.json"
-
     try:
-        with open(config_path, "r") as f:
-            cfg = json.load(f)
+        cfg, needs_rewrite = _load_ida_config_compat(config_path)
         existing = cfg.get("Paths", {}).get("ida-install-dir", "").strip()
         if existing and os.path.isdir(existing):
+            if needs_rewrite:
+                _write_ida_config_no_bom(config_path, cfg)
+                print(f"\n  [ok] Normalized ida-config.json encoding: {config_path}")
             print(f"\n  [ok] ida-config.json already has ida-install-dir: {existing}")
             return
-    except Exception:
+    except Exception as e:
+        if config_path.exists():
+            print(f"\n  [--] Existing ida-config.json is invalid or unreadable; regenerating: {e}")
         cfg = {}
 
     # Auto-detect
@@ -957,10 +996,8 @@ def _configure_idalib_path():
     cfg.setdefault("Paths", {})
     cfg["Paths"]["ida-install-dir"] = detected
 
-    config_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with open(config_path, "w") as f:
-            json.dump(cfg, f, indent=4)
+        _write_ida_config_no_bom(config_path, cfg)
         print(f"\n  [ok] Auto-detected IDA at: {detected}")
         print(f"       Written to: {config_path}")
     except Exception as e:
