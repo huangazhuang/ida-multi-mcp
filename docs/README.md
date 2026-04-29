@@ -1,6 +1,6 @@
 # Documentation Hub
 
-Last updated: 2026-02-17
+Last updated: 2026-04-29
 Status: Active
 
 This document is the entry point for the `ida-multi-mcp` documentation.
@@ -25,6 +25,7 @@ This document is the entry point for the `ida-multi-mcp` documentation.
 - SSOT TODO: `docs/.ssot/TODO.md`
 - Ops roadmap: `docs/ops/ROADMAP.md`
 - Installation guide: `docs/installation.md`
+- Headless-default IDA Pro mode: `docs/headless-default.md`
 
 ## Applicability Snapshot
 - HTTP API spec: `N/A` (CLI-centric for now)

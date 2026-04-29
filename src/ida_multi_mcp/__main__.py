@@ -1035,8 +1035,9 @@ def cmd_install(args):
     print("\n" + "=" * 60)
     print("Next steps:")
     print("  1. Restart your MCP client(s) for the config to take effect")
-    print("  2. Open IDA Pro - the plugin auto-loads (PLUGIN_FIX)")
-    print("  3. Run 'ida-multi-mcp --list' to verify instances")
+    print("  2. Headless default: call IDA tools with input_path; no GUI is required")
+    print("  3. Optional GUI mode: open IDA Pro and the plugin auto-loads (PLUGIN_FIX)")
+    print("  4. Run 'ida-multi-mcp --list' to verify registered instances")
     print("=" * 60)
     return 0
 

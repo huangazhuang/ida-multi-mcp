@@ -75,6 +75,95 @@ class IdaMultiMcpServer:
         # Register handlers
         self._register_handlers()
 
+
+    @staticmethod
+    def _truthy(value: Any, default: bool = False) -> bool:
+        """Parse MCP boolean-ish values consistently."""
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            return value.strip().lower() not in {"0", "false", "no", "off", ""}
+        return bool(value)
+
+    def _select_single_instance(self, arguments: dict[str, Any]) -> str | None:
+        """Select the only registered instance when the caller omitted instance_id."""
+        instance_id = arguments.get("instance_id")
+        if instance_id:
+            return instance_id
+        instances = self.registry.list_instances()
+        if len(instances) == 1:
+            instance_id = next(iter(instances))
+            arguments["instance_id"] = instance_id
+            return instance_id
+        return None
+
+    def _prepare_headless_arguments(self, arguments: dict[str, Any]) -> dict[str, Any] | None:
+        """Resolve optional input_path into a headless IDA Pro idalib instance.
+
+        IDA tools may pass input_path instead of instance_id. In that case this
+        server opens the binary through idalib (IDA Pro headless), stores the new
+        instance_id back into arguments, and strips routing-only parameters before
+        forwarding the request to the real IDA tool.
+        """
+        explicit_instance = arguments.get("instance_id")
+        input_path = arguments.pop("input_path", None)
+        timeout = arguments.pop("idalib_timeout", arguments.pop("headless_timeout", 120))
+        unsafe = self._truthy(arguments.pop("unsafe", None), default=True)
+
+        # Explicit instance_id wins; input_path is only a convenience for opening
+        # or selecting a headless target.
+        if explicit_instance:
+            return None
+        if not input_path:
+            return None
+
+        resolved = os.path.realpath(str(input_path))
+        if not os.path.isfile(resolved):
+            return {"error": f"input_path not found for headless IDA open: {input_path}"}
+
+        # Reuse a live headless instance for the same binary when possible.
+        try:
+            from .health import ping_instance
+            want = os.path.normcase(os.path.abspath(resolved))
+            for instance_id, info in self.registry.list_instances().items():
+                if info.get("type") != "idalib":
+                    continue
+                known_path = info.get("binary_path") or info.get("idb_path") or ""
+                if os.path.normcase(os.path.abspath(known_path)) != want:
+                    continue
+                host = info.get("host", "127.0.0.1")
+                port = int(info.get("port", 0) or 0)
+                if port and ping_instance(host, port, timeout=2.0):
+                    arguments["instance_id"] = instance_id
+                    return None
+        except Exception:
+            pass
+
+        try:
+            timeout_i = int(timeout)
+        except Exception:
+            timeout_i = 120
+
+        result = self.idalib_manager.spawn_session(
+            resolved,
+            timeout=timeout_i,
+            unsafe=unsafe,
+        )
+        if "error" in result:
+            return result
+
+        instance_id = result.get("instance_id")
+        if not instance_id:
+            return {"error": "idalib_open succeeded but did not return an instance_id", "result": result}
+
+        arguments["instance_id"] = instance_id
+        self._refresh_tools()
+        return None
+
     def _register_handlers(self):
         """Register MCP protocol handlers."""
 
@@ -152,6 +241,80 @@ class IdaMultiMcpServer:
                 return _truncate(value)
 
             return value
+
+        # Expose lightweight server resources so clients that only inspect
+        # resources/list can still see ida-multi-mcp is present.  IDA database
+        # resources remain served by each concrete GUI/idalib instance.
+        def custom_resources_list(cursor: str | None = None, _meta: dict | None = None) -> dict:
+            return {
+                "resources": [
+                    {
+                        "uri": "ida-multi-mcp://status",
+                        "name": "ida_multi_mcp_status",
+                        "title": "ida-multi-mcp Status",
+                        "description": "Status, defaults, and headless IDA Pro mode for ida-multi-mcp.",
+                        "mimeType": "application/json",
+                    },
+                    {
+                        "uri": "ida-multi-mcp://instances",
+                        "name": "ida_multi_mcp_instances",
+                        "title": "ida-multi-mcp Instances",
+                        "description": "Currently registered GUI and headless idalib IDA instances.",
+                        "mimeType": "application/json",
+                    },
+                    {
+                        "uri": "ida-multi-mcp://headless-help",
+                        "name": "ida_multi_mcp_headless_help",
+                        "title": "ida-multi-mcp Headless Help",
+                        "description": "How to call IDA tools with input_path for automatic IDA Pro idalib headless opening.",
+                        "mimeType": "text/markdown",
+                    },
+                ]
+            }
+
+        def custom_resources_read(uri: str, _meta: dict | None = None) -> dict:
+            def _content(value: Any, mime: str = "application/json") -> dict:
+                text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2)
+                return {"contents": [{"uri": uri, "mimeType": mime, "text": text}]}
+
+            if uri == "ida-multi-mcp://status":
+                from .idalib_manager import is_idalib_available
+                instances = self.registry.list_instances()
+                return _content({
+                    "server": "ida-multi-mcp",
+                    "version": "1.0.0",
+                    "tools_count": len(self._tool_cache) if self._cache_valid else None,
+                    "instances_count": len(instances),
+                    "headless_default": True,
+                    "idalib_available": is_idalib_available(),
+                    "unsafe_default": True,
+                    "usage": "Call IDA tools with input_path when instance_id is omitted; ida-multi-mcp opens IDA Pro idalib headless automatically.",
+                })
+
+            if uri == "ida-multi-mcp://instances":
+                return _content(management.list_instances())
+
+            if uri == "ida-multi-mcp://headless-help":
+                return _content(
+                    "# ida-multi-mcp headless usage\n\n"
+                    "This server defaults to IDA Pro headless/idalib mode. For IDA tools, pass `input_path` instead of manually opening IDA GUI.\n\n"
+                    "Example tool arguments for `list_funcs`:\n\n"
+                    "```json\n{\n  \"input_path\": \"D:\\\\path\\\\target.exe\",\n  \"queries\": {\"count\": 50, \"offset\": 0}\n}\n```\n\n"
+                    "Useful tools include `list_instances`, `idalib_open`, `list_funcs`, `decompile`, `disasm`, and `survey_binary`.\n",
+                    "text/markdown",
+                )
+
+            return _content({
+                "error": f"Resource not found: {uri}",
+                "available": [
+                    "ida-multi-mcp://status",
+                    "ida-multi-mcp://instances",
+                    "ida-multi-mcp://headless-help",
+                ],
+            })
+
+        self.server.registry.methods["resources/list"] = custom_resources_list
+        self.server.registry.methods["resources/read"] = custom_resources_read
 
         # Override tools/list to return cached tools
 
@@ -250,26 +413,40 @@ class IdaMultiMcpServer:
 
             # IDA tools (proxied)
             else:
-                # Check if any IDA instance is available before proxying
-                active = self.registry.get_active()
-                if not active:
-                    # Try auto-discovery before giving up
-                    discovered = rediscover_instances(self.registry)
-                    if discovered:
-                        active = self.registry.get_active()
-                if not active:
+                # Work on a copy so helper-only routing arguments are not leaked
+                # into the underlying IDA tool call.
+                arguments = arguments.copy()
+
+                # Default headless behavior: when input_path is provided and no
+                # instance_id is specified, open the binary via IDA Pro idalib.
+                headless_error = self._prepare_headless_arguments(arguments)
+                if headless_error:
                     return {
-                        "content": [{"type": "text", "text": (
-                            f"Error: No IDA Pro instance is connected. "
-                            f"Cannot execute tool '{name}'.\n\n"
-                            f"To fix this:\n"
-                            f"1. Open IDA Pro and load a binary\n"
-                            f"2. Press Ctrl+M (or start the MCP plugin manually)\n"
-                            f"3. The plugin will auto-register with this server\n"
-                            f"4. Use 'list_instances' to verify the connection"
-                        )}],
+                        "content": [{"type": "text", "text": f"Error: {_json_text(headless_error)}"}],
+                        "structuredContent": headless_error,
                         "isError": True,
                     }
+
+                # Check if any IDA instance is available before proxying. If the
+                # helper set instance_id, skip the active-instance requirement.
+                if not arguments.get("instance_id"):
+                    active = self.registry.get_active()
+                    if not active:
+                        # Try auto-discovery before giving up
+                        discovered = rediscover_instances(self.registry)
+                        if discovered:
+                            active = self.registry.get_active()
+                    if not active:
+                        return {
+                            "content": [{"type": "text", "text": (
+                                f"Error: No IDA Pro/headless instance is connected. "
+                                f"Cannot execute tool '{name}'.\n\n"
+                                f"Pass input_path to this tool to open the binary with "
+                                f"IDA Pro idalib headless automatically, or call "
+                                f"idalib_open(input_path=...) first."
+                            )}],
+                            "isError": True,
+                        }
 
                 # Extract max_output_chars if provided (0 = unlimited)
                 max_output = arguments.pop("max_output_chars", DEFAULT_MAX_OUTPUT_CHARS)
@@ -353,15 +530,20 @@ class IdaMultiMcpServer:
 
         Orchestrates list_funcs + decompile calls via IDA, writes to disk locally.
         """
+        arguments = arguments.copy()
+        headless_error = self._prepare_headless_arguments(arguments)
+        if headless_error:
+            return headless_error
+
         decompile_all = arguments.get("all", False)
         addrs = arguments.get("addrs", [])
         output_dir = arguments.get("output_dir", ".")
         mode = arguments.get("mode", "single")
-        instance_id = arguments.get("instance_id")
+        instance_id = arguments.get("instance_id") or self._select_single_instance(arguments)
         if not instance_id:
             return {
-                "error": "Missing required parameter 'instance_id'.",
-                "hint": "Call list_instances() and pass instance_id explicitly.",
+                "error": "Missing target IDA instance.",
+                "hint": "Pass input_path to open IDA Pro headless automatically, or pass instance_id explicitly.",
             }
 
         # Security: validate output_dir to prevent path traversal
@@ -372,7 +554,7 @@ class IdaMultiMcpServer:
         # Warn but allow absolute paths (they may be intentional from the user)
         output_dir = resolved_dir
 
-        # addr → name mapping (populated by list_funcs when using 'all')
+        # addr -> name mapping (populated by list_funcs when using 'all')
         addr_names: dict[str, str] = {}
 
         # Fetch all function addresses via paginated list_funcs calls
@@ -625,10 +807,23 @@ class IdaMultiMcpServer:
                     },
                     "instance_id": {
                         "type": "string",
-                        "description": "Target IDA instance ID (required)"
+                        "description": "Target IDA instance ID (optional when input_path is provided or exactly one instance exists)"
+                    },
+                    "input_path": {
+                        "type": "string",
+                        "description": "Binary/IDB path to open automatically with IDA Pro idalib headless when instance_id is omitted"
+                    },
+                    "idalib_timeout": {
+                        "type": "integer",
+                        "description": "Seconds to wait for headless IDA analysis/open (default: 120)"
+                    },
+                    "unsafe": {
+                        "type": "boolean",
+                        "description": "Enable full/unsafe IDA Pro tools in headless worker (default: true)",
+                        "default": True
                     }
                 },
-                "required": ["output_dir", "instance_id"]
+                "required": ["output_dir"]
             }
         }
 
@@ -648,16 +843,29 @@ class IdaMultiMcpServer:
         for tool_schema in _load_static_ida_tools():
             schema = tool_schema.copy()
 
-            # Require explicit instance_id for all IDA tools (avoid global active instance contention).
+            # Add optional routing/headless parameters. By default callers can
+            # pass input_path and the server will open it through IDA Pro idalib.
             input_schema = schema.get("inputSchema", {}) or {}
             properties = input_schema.get("properties", {}) or {}
             required = input_schema.get("required", []) or []
             properties["instance_id"] = {
                 "type": "string",
-                "description": "Target IDA instance ID (required)"
+                "description": "Target IDA instance ID (optional when input_path is provided or exactly one instance exists)"
             }
-            if "instance_id" not in required:
-                required.append("instance_id")
+            properties["input_path"] = {
+                "type": "string",
+                "description": "Binary/IDB path to open automatically with IDA Pro idalib headless when instance_id is omitted"
+            }
+            properties["idalib_timeout"] = {
+                "type": "integer",
+                "description": "Seconds to wait for headless IDA analysis/open (default: 120)"
+            }
+            properties["unsafe"] = {
+                "type": "boolean",
+                "description": "Enable full/unsafe IDA Pro tools in headless worker (default: true)",
+                "default": True,
+            }
+            required = [r for r in required if r != "instance_id"]
             input_schema["properties"] = properties
             input_schema["required"] = required
             schema["inputSchema"] = input_schema
@@ -708,13 +916,25 @@ class IdaMultiMcpServer:
                 properties = input_schema.get("properties", {}) or {}
                 required = input_schema.get("required", []) or []
 
-                # Add instance_id parameter (required)
+                # Add optional routing/headless parameters.
                 properties["instance_id"] = {
                     "type": "string",
-                    "description": "Target IDA instance ID (required)"
+                    "description": "Target IDA instance ID (optional when input_path is provided or exactly one instance exists)"
                 }
-                if "instance_id" not in required:
-                    required.append("instance_id")
+                properties["input_path"] = {
+                    "type": "string",
+                    "description": "Binary/IDB path to open automatically with IDA Pro idalib headless when instance_id is omitted"
+                }
+                properties["idalib_timeout"] = {
+                    "type": "integer",
+                    "description": "Seconds to wait for headless IDA analysis/open (default: 120)"
+                }
+                properties["unsafe"] = {
+                    "type": "boolean",
+                    "description": "Enable full/unsafe IDA Pro tools in headless worker (default: true)",
+                    "default": True,
+                }
+                required = [r for r in required if r != "instance_id"]
 
                 input_schema["properties"] = properties
                 input_schema["required"] = required

@@ -109,7 +109,7 @@ class IdalibManager:
         *,
         host: str = "127.0.0.1",
         timeout: int = _READY_TIMEOUT,
-        unsafe: bool = False,
+        unsafe: bool = True,
     ) -> dict:
         """Spawn a headless idalib worker for *input_path*.
 

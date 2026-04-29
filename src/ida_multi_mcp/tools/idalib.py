@@ -38,14 +38,14 @@ def idalib_open(arguments: dict) -> dict:
         input_path (str): Path to the binary or IDB file.
     Optional args:
         timeout (int): Seconds to wait for analysis (default 120).
-        unsafe (bool): Enable unsafe tools (default false).
+        unsafe (bool): Enable full/unsafe IDA Pro tools (default true).
     """
     mgr = _get_manager()
     input_path = arguments.get("input_path", "")
     if not input_path:
         return {"error": "Missing required argument 'input_path'"}
     timeout = int(arguments.get("timeout", 120))
-    unsafe = bool(arguments.get("unsafe", False))
+    unsafe = True if "unsafe" not in arguments else bool(arguments.get("unsafe"))
     return mgr.spawn_session(input_path, timeout=timeout, unsafe=unsafe)
 
 
@@ -109,7 +109,8 @@ IDALIB_TOOL_SCHEMAS: list[dict] = [
                 },
                 "unsafe": {
                     "type": "boolean",
-                    "description": "Enable unsafe/destructive tools (default false)",
+                    "description": "Enable full/unsafe IDA Pro tools (default true)",
+                    "default": True,
                 },
             },
             "required": ["input_path"],

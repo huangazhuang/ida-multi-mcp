@@ -11,18 +11,46 @@ Multi-instance IDA Pro MCP server for simultaneous reverse engineering of multip
 
 Analyze multiple binaries in parallel — dropper, payload, C2 — through a single MCP connection. Each IDA Pro instance auto-registers on startup; your LLM client sees every instance without touching its config.
 
+
+## Headless-default IDA Pro fork
+
+This fork is tuned for IDA Pro users who want the MCP client to open binaries without manually starting the IDA GUI first.  IDA tools can pass `input_path` instead of `instance_id`; the router opens that file through IDA Pro `idalib` headless, reuses an existing matching headless session when possible, and then forwards the original tool call.
+
+```json
+{
+  "name": "list_funcs",
+  "arguments": {
+    "input_path": "D:\\path\\target.exe",
+    "queries": {"count": 50, "offset": 0}
+  }
+}
+```
+
+Defaults changed in this fork:
+- `idalib_open` and automatic `input_path` opens use `unsafe=true` by default, exposing the full IDA Pro tool surface.
+- `instance_id` is optional for IDA tools when `input_path` is supplied, or when exactly one instance is registered.
+- `resources/list` shows `ida-multi-mcp://status`, `ida-multi-mcp://instances`, and `ida-multi-mcp://headless-help`, so MCP clients can discover that this server is available even before an IDB is open.
+
+Install this fork directly:
+
+```powershell
+python -m pip install "git+https://github.com/huangazhuang/ida-multi-mcp.git"
+```
+
+For headless support, run the MCP server with a Python environment that has Hex-Rays' `idapro` package installed and can resolve your IDA Pro install via `IDADIR` or `ida-config.json`.
+
 ## Quick Start
 
 **Just ask your AI agent to install it.** Copy-paste one of these prompts — it handles the Python version matching, IDA plugin placement, and MCP client registration for you.
 
 **Claude Code / AmpCode:**
-> Install and configure ida-multi-mcp by following the instructions here: https://raw.githubusercontent.com/MeroZemory/ida-multi-mcp/main/docs/installation.md
+> Install and configure ida-multi-mcp by following the instructions here: https://raw.githubusercontent.com/huangazhuang/ida-multi-mcp/main/docs/installation.md
 
 **Cursor:**
-> @Web fetch https://raw.githubusercontent.com/MeroZemory/ida-multi-mcp/main/docs/installation.md and follow the installation steps.
+> @Web fetch https://raw.githubusercontent.com/huangazhuang/ida-multi-mcp/main/docs/installation.md and follow the installation steps.
 
-Once installed, open your binaries in IDA Pro (instances auto-register) and ask your LLM:
-> *"Decompile `main` in malware.exe (k7m2) and compare it with the entry point in dropper.dll (px3a)"*
+Once installed, either pass `input_path` for automatic headless IDA Pro analysis, or open binaries in IDA Pro GUI (instances auto-register), then ask your LLM:
+> *"Use `input_path` to list functions in `D:\\path\\malware.exe`, then decompile `main`."*
 
 Prefer to install by hand? See [Manual Installation](#manual-installation) below.
 
@@ -85,10 +113,10 @@ Note the version (e.g., `3.11`).
 
 ```bash
 # 1. Install CLI tool via pipx (for terminal commands)
-pipx install git+https://github.com/MeroZemory/ida-multi-mcp.git
+pipx install git+https://github.com/huangazhuang/ida-multi-mcp.git
 
 # 2. Install package for IDA's Python (replace 3.11 with your IDA's version)
-python3.11 -m pip install --user git+https://github.com/MeroZemory/ida-multi-mcp.git
+python3.11 -m pip install --user git+https://github.com/huangazhuang/ida-multi-mcp.git
 
 # 3. Install IDA plugin + configure MCP clients
 ida-multi-mcp --install
@@ -110,7 +138,7 @@ ida-multi-mcp --uninstall
 python -m pip uninstall -y ida-multi-mcp
 
 # 1. Install ida-multi-mcp
-python -m pip install git+https://github.com/MeroZemory/ida-multi-mcp.git
+python -m pip install git+https://github.com/huangazhuang/ida-multi-mcp.git
 
 # 2. Install IDA plugin + configure all MCP clients
 ida-multi-mcp --install
@@ -126,7 +154,7 @@ ida-multi-mcp --install
 
 ```bash
 # 1. Install ida-multi-mcp
-pip install --user git+https://github.com/MeroZemory/ida-multi-mcp.git
+pip install --user git+https://github.com/huangazhuang/ida-multi-mcp.git
 
 # 2. Install IDA plugin + configure MCP clients
 ida-multi-mcp --install
@@ -137,7 +165,7 @@ ida-multi-mcp --install
 ### AI-agent reference
 
 The canonical installation guide an AI agent should follow is at
-[`docs/installation.md`](https://raw.githubusercontent.com/MeroZemory/ida-multi-mcp/main/docs/installation.md). It covers platform-specific package installation, IDA Python version matching, plugin setup via `ida-multi-mcp --install`, and verification.
+[`docs/installation.md`](https://raw.githubusercontent.com/huangazhuang/ida-multi-mcp/main/docs/installation.md). It covers platform-specific package installation, IDA Python version matching, plugin setup via `ida-multi-mcp --install`, and verification.
 
 ### Supported MCP Clients
 
@@ -469,13 +497,13 @@ This usually means IDA's Python cannot find the package due to a **Python versio
    **macOS:**
    ```bash
    # Replace 3.11 with IDA's actual Python version
-   python3.11 -m pip install --user git+https://github.com/MeroZemory/ida-multi-mcp.git
+   python3.11 -m pip install --user git+https://github.com/huangazhuang/ida-multi-mcp.git
    ```
 
    **Windows:**
    ```bash
    # Replace 3.12 with IDA's actual Python version
-   py -3.12 -m pip install git+https://github.com/MeroZemory/ida-multi-mcp.git
+   py -3.12 -m pip install git+https://github.com/huangazhuang/ida-multi-mcp.git
    ```
 
 3. Ensure the IDA plugins directory contains `ida_multi_mcp.py`:
