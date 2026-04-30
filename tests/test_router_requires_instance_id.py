@@ -3,6 +3,7 @@ import sys
 import unittest
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +27,8 @@ class TestRouterRequiresInstanceId(unittest.TestCase):
             )
 
             router = InstanceRouter(registry)
-            resp = router.route_request("tools/call", {"name": "list_funcs", "arguments": {"queries": "{}"}})
+            with patch("ida_multi_mcp.health.is_process_alive", return_value=True):
+                resp = router.route_request("tools/call", {"name": "list_funcs", "arguments": {"queries": "{}"}})
 
             # Should NOT get "Missing required parameter 'instance_id'" error
             if "error" in resp:

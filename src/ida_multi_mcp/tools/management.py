@@ -39,6 +39,14 @@ def list_instances() -> dict:
     and registration time for each running IDA Pro instance.
     """
     registry = _get_registry()
+    # Avoid returning stale registry entries whose IDA/idalib worker process has
+    # already exited.  Without this, MCP resources can advertise an instance
+    # whose localhost port is no longer listening, and later tool calls fail
+    # with connection refused.
+    if hasattr(registry, "expire_instance") and hasattr(registry, "cleanup_expired"):
+        from ..health import cleanup_stale_instances
+        cleanup_stale_instances(registry)
+
     instances = registry.list_instances()
     result = []
     for id, info in instances.items():

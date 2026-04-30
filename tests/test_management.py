@@ -34,6 +34,22 @@ class TestListInstances:
         assert result["count"] == 0
         assert result["instances"] == []
 
+    def test_cleans_dead_processes_with_real_registry(self, tmp_registry, monkeypatch):
+        iid = tmp_registry.register(
+            pid=123, port=4567, idb_path="/tmp/dead.i64",
+            binary_name="dead.exe", host="127.0.0.1",
+        )
+        management.set_registry(tmp_registry)
+        monkeypatch.setattr("ida_multi_mcp.health.is_process_alive", lambda pid: False)
+
+        result = management.list_instances()
+
+        assert result["count"] == 0
+        assert tmp_registry.get_instance(iid) is None
+        expired = tmp_registry.get_expired(iid)
+        assert expired is not None
+        assert expired["reason"] == "process_dead"
+
 
 class TestRefreshTools:
     def test_with_callback(self):

@@ -26,10 +26,11 @@ class TestMissingInstanceId:
     def test_auto_selects_single_instance(self, router_env):
         """With 1 instance, missing instance_id should auto-select (not error)."""
         reg, router, iid = router_env
-        resp = router.route_request("tools/call", {"arguments": {}})
-        # Should NOT get "Missing instance_id" — may get connection error instead
-        if "error" in resp:
-            assert "instance_id" not in str(resp["error"]).lower()
+        with patch("ida_multi_mcp.health.is_process_alive", return_value=True):
+            resp = router.route_request("tools/call", {"arguments": {}})
+            # Should NOT get "Missing instance_id" - may get connection error instead
+            if "error" in resp:
+                assert "instance_id" not in str(resp["error"]).lower()
 
     def test_error_with_multiple_instances(self, tmp_path):
         """With 2+ instances, missing instance_id should error."""
@@ -60,11 +61,34 @@ class TestExpiredInstance:
         iid2 = reg.register(pid=43, port=7001, idb_path="/test2.i64",
                             binary_name="test.exe", host="127.0.0.1")
         reg.expire_instance(iid, reason="binary_changed", replaced_by=iid2)
-        resp = router.route_request("tools/call",
-                                    {"arguments": {"instance_id": iid}})
+        with patch("ida_multi_mcp.health.is_process_alive", return_value=True):
+            resp = router.route_request("tools/call",
+                                        {"arguments": {"instance_id": iid}})
         assert "error" in resp
         assert resp["reason"] == "binary_changed"
         assert any(r["id"] == iid2 for r in resp.get("replacements", []))
+
+    def test_dead_process_is_expired_before_routing(self, tmp_path, monkeypatch):
+        reg = InstanceRegistry(str(tmp_path / "inst.json"))
+        iid = reg.register(
+            pid=123,
+            port=4567,
+            idb_path="/tmp/dead.i64",
+            binary_name="dead.exe",
+            host="127.0.0.1",
+        )
+        monkeypatch.setattr("ida_multi_mcp.health.is_process_alive", lambda pid: False)
+        router = InstanceRouter(reg)
+
+        resp = router.route_request(
+            "tools/call",
+            {"arguments": {"instance_id": iid}},
+        )
+
+        assert "error" in resp
+        assert "expired" in resp["error"]
+        assert reg.get_instance(iid) is None
+        assert reg.get_expired(iid)["reason"] == "process_dead"
 
 
 class TestBinaryPathVerification:
@@ -144,12 +168,13 @@ class TestSendRequest:
         mock_conn = MagicMock()
         mock_conn.getresponse.return_value = mock_response
 
-        with patch("ida_multi_mcp.router.query_binary_metadata",
-                   return_value={"module": "test.exe"}):
-            with patch("http.client.HTTPConnection", return_value=mock_conn):
-                resp = router.route_request("tools/call", {
-                    "arguments": {"instance_id": iid, "addr": "0x1000"}
-                })
+        with patch("ida_multi_mcp.health.is_process_alive", return_value=True):
+            with patch("ida_multi_mcp.router.query_binary_metadata",
+                       return_value={"module": "test.exe"}):
+                with patch("http.client.HTTPConnection", return_value=mock_conn):
+                    resp = router.route_request("tools/call", {
+                        "arguments": {"instance_id": iid, "addr": "0x1000"}
+                    })
 
         # Verify instance_id was stripped from the forwarded request
         call_args = mock_conn.request.call_args

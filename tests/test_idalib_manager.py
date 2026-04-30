@@ -205,7 +205,8 @@ class TestListInstancesTypeField:
 
         tmp_registry.register(pid=1, port=100, idb_path="/a.i64",
                               binary_name="a.exe", host="127.0.0.1")
-        result = list_instances()
+        with patch("ida_multi_mcp.health.is_process_alive", return_value=True):
+            result = list_instances()
         assert result["count"] == 1
         assert result["instances"][0]["type"] == "gui"
 
@@ -216,6 +217,7 @@ class TestListInstancesTypeField:
         tmp_registry.register(pid=2, port=200, idb_path="/b.i64",
                               binary_name="b.exe", host="127.0.0.1",
                               type="idalib")
-        result = list_instances()
+        with patch("ida_multi_mcp.health.is_process_alive", return_value=True):
+            result = list_instances()
         assert result["count"] == 1
         assert result["instances"][0]["type"] == "idalib"

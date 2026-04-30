@@ -10,7 +10,7 @@ import time
 from typing import Any
 
 from .registry import InstanceRegistry, ALLOWED_HOSTS
-from .health import query_binary_metadata
+from .health import cleanup_stale_instances, query_binary_metadata
 
 
 class InstanceRouter:
@@ -39,6 +39,10 @@ class InstanceRouter:
         Returns:
             Response dict from the IDA instance
         """
+        # Clear dead PIDs before selecting or connecting.  This prevents stale
+        # registry entries from routing to a closed localhost port.
+        cleanup_stale_instances(self.registry)
+
         # Extract instance_id from params
         instance_id = params.get("arguments", {}).get("instance_id")
 
